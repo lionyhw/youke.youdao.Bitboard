@@ -1,0 +1,5 @@
+".\Objects\STARTUP.obj",
+".\Objects\UART.obj" 
+TO ".\Objects\BitBoard" 
+
+PRINT(".\Listings\BitBoard.map")

@@ -1,0 +1,631 @@
+C51 COMPILER V9.60.0.0   UART                                                              08/17/2021 11:20:29 PAGE 1   
+
+
+C51 COMPILER V9.60.0.0, COMPILATION OF MODULE UART
+OBJECT MODULE PLACED IN .\Objects\UART.obj
+COMPILER INVOKED BY: C:\Keil_v5_arm_c51\C51\BIN\C51.EXE UART.C LARGE OMF2 OPTIMIZE(8,SPEED) BROWSE DEBUG PRINT(.\Listing
+                    -s\UART.lst) TABS(2) OBJECT(.\Objects\UART.obj)
+
+line level    source
+
+   1          #include <main.h>
+   2          //*****************************************************************************************//
+   3          //**********************************VER 1.0 data:20181227**********************************//
+   4          //**********************************    author : fred    **********************************//
+   5          //*********************************** UART  send&receive***********************************//
+   6          //***************** receive 10 sample data and then send the data**************************//
+   7          //****************************reveive data and then send data *****************************//
+   8          //*****************************************************************************************//
+   9          
+  10          //************************UART**************************//
+  11          bit F_transmit = 1;
+  12          //****************************ADC************************//
+  13          bit ADC_Transformation_End=0;
+  14          //***************************GPIO_FUNCTION****************//
+  15          #define __bit(x)  (1<<(x))
+  16          #define SET_IO_DIR_OUT(a,p) P##a##TRIS |= __bit(p)
+  17          #define SET_IO_DIR_IN(a,p) P##a##TRIS &= ~__bit(p)
+  18          #define SET_IO_OD(a,p) P##a##OD |= __bit(p)
+  19          #define SET_IO_PP(a,p) P##a##OD &= ~__bit(p)
+  20          #define EN_IO_UP(a,p) P##a##UP |= __bit(p)
+  21          #define DE_IO_UP(a,p) P##a##UP &= ~__bit(p)
+  22          #define   pin0  0x01;
+  23          #define   pin1  0x02;
+  24          #define   pin2  0x04;
+  25          #define   pin3  0x08;
+  26          #define   pin4  0x10;
+  27          #define   pin5  0x20;
+  28          #define   pin6  0x40;
+  29          #define   pin7  0x80;
+  30          //*******************GPIO_Pin*********************//
+  31          #define UP P3_2
+  32          #define UP_LED P3_6
+  33          #define LEFT P3_1
+  34          #define LEFT_LED P3_0
+  35          #define DOWN P2_4
+  36          #define DOWN_LED P2_1
+  37          #define RIGHT P2_6
+  38          #define RIGHT_LED P2_5
+  39          #define SPACE P2_3
+  40          #define SPACE_LED P1_7
+  41          #define CLICK P2_2
+  42          #define CLICK_LED P1_6
+  43          #define A P1_3
+  44          #define A_LED P0_4
+  45          #define B P1_4
+  46          #define B_LED P1_5
+  47          
+  48          /////////////////////////////////
+  49          ///////KeyCodes//////////////////
+  50          /////////////////////////////////
+  51          u8 CMDSendFlag = 0;
+  52          u8 MousePressd = 0;
+  53          u8 KeyPadADCChannel[8]={0xBE,0xBA,0xBD,0xBC,0xB9,0xB7,0xB6,0xB8};
+  54          u8 KeyPadCMD[14]={0x57,0xAB,0x00,0x02,0x08,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00};
+C51 COMPILER V9.60.0.0   UART                                                              08/17/2021 11:20:29 PAGE 2   
+
+  55          u8 KeyPadCode[7]={0x52,0x51,0x50,0x4F,0x2C,0x05,0x04};   //up down left right space B  A
+  56          u8 KeyPadCMDNum[6]={7,8,9,10,11,12};
+  57          u8 MousePress[13]   ={0x57,0xab,0x00,0x04,0x07,0x02,0x01,0x00,0x00,0x00,0x00,0x00,0x10};
+  58          u8 MouseRelease[13] ={0x57,0xab,0x00,0x04,0x07,0x02,0x00,0x00,0x00,0x00,0x00,0x00,0x0F};
+  59          
+  60          ///////////////////////////////Suanfa//////////////////////////////
+  61          #define SWITCH_THRESHOLD_OFFSET_PERC 15
+  62          #define SWITCH_THRESHOLD_CENTER_BIAS 50      
+  63          #define BUFFER_LENGTH    3     // 3 bytes gives us 24 samples
+  64          u8 pressThreshold = 0;
+  65          u8 releaseThreshold = 0;
+  66          u8 bufferIndex = 0;
+  67          u8 byteCounter = 0;
+  68          u8 bitCounter = 0;
+  69          typedef struct {
+  70            u8 measurementBuffer[3]; 
+  71            bool oldestMeasurement;
+  72            bool pressed;
+  73            u8 bufferSum;
+  74          } MakeyMakeyInput;
+  75          
+  76          MakeyMakeyInput inputs[8];
+  77          void delay50us(void)   //?? 0us
+  78          {
+  79   1          unsigned char a,b;
+  80   1          for(b=239;b>0;b--)
+  81   1              for(a=1;a>0;a--);
+  82   1      }
+  83          
+  84          
+  85          //*******************MAIN*********************//
+  86          void main()
+  87          {
+  88   1        GPIO_Init();            //initinal GPIO
+  89   1        DanceLED();
+  90   1        UART1_INIT();           //initinal UART
+  91   1        INT_init(); 
+  92   1        ADC_init();
+  93   1        initializeInputs();
+  94   1        while(1)
+  95   1        {
+  96   2          clrwdt()                //clear WDT
+  97   2          updateMeasurementBuffers();
+  98   2          updateBufferSums();
+  99   2          updateBufferIndex();
+ 100   2          updateInputStates();
+ 101   2          if(CMDSendFlag){
+ 102   3            sendKeyPadStates();
+ 103   3            CMDSendFlag=0;
+ 104   3          }
+ 105   2      delay50us();
+ 106   2        }
+ 107   1      }
+ 108          ///////////////////////////
+ 109          // INITIALIZE INPUTS
+ 110          ///////////////////////////
+ 111          void initializeInputs() {
+ 112   1        u8 i =0,j = 0;
+ 113   1        float thresholdPerc = SWITCH_THRESHOLD_OFFSET_PERC;
+ 114   1        float thresholdCenterBias = SWITCH_THRESHOLD_CENTER_BIAS/50.0;
+ 115   1        float pressThresholdAmount = (BUFFER_LENGTH * 8) * (thresholdPerc / 100.0);
+ 116   1        float thresholdCenter = ( (BUFFER_LENGTH * 8) / 2.0 ) * (thresholdCenterBias);
+C51 COMPILER V9.60.0.0   UART                                                              08/17/2021 11:20:29 PAGE 3   
+
+ 117   1        pressThreshold = thresholdCenter + pressThresholdAmount;
+ 118   1        releaseThreshold = thresholdCenter - pressThresholdAmount;
+ 119   1      
+ 120   1      
+ 121   1        for (i=0; i<8; i++) {
+ 122   2          for (j=0; j<3; j++) {
+ 123   3            inputs[i].measurementBuffer[j] = 0;
+ 124   3          }
+ 125   2          inputs[i].oldestMeasurement = 0;
+ 126   2          inputs[i].bufferSum = 0;
+ 127   2          inputs[i].pressed = 0;
+ 128   2        }
+ 129   1      }
+ 130          
+ 131          //////////////////////////////
+ 132          // UPDATE MEASUREMENT BUFFERS
+ 133          //////////////////////////////
+ 134          void updateMeasurementBuffers() {
+ 135   1      u8 i=0;
+ 136   1        char newMeasurement = 0;
+ 137   1        for (i=0; i<8; i++) {
+ 138   2      
+ 139   2          // store the oldest measurement, which is the one at the current index,
+ 140   2          // before we update it to the new one 
+ 141   2          // we use oldest measurement in updateBufferSums
+ 142   2          u8 currentByte = inputs[i].measurementBuffer[byteCounter];
+ 143   2          inputs[i].oldestMeasurement = (currentByte >> bitCounter) & 0x01; 
+ 144   2      
+ 145   2          // make the new measurement
+ 146   2          newMeasurement = ((Get_Channl_ADC_Val(KeyPadADCChannel[i]) < 1200) ? 0 : 1);
+ 147   2      
+ 148   2      
+ 149   2          // invert so that true means the switch is closed
+ 150   2          newMeasurement = !newMeasurement; 
+ 151   2      
+ 152   2          // store it    
+ 153   2          if (newMeasurement) {
+ 154   3            currentByte |= (1<<bitCounter);
+ 155   3          } 
+ 156   2          else {
+ 157   3            currentByte &= ~(1<<bitCounter);
+ 158   3          }
+ 159   2          inputs[i].measurementBuffer[byteCounter] = currentByte;
+ 160   2        }
+ 161   1      }
+ 162          ///////////////////////////
+ 163          // UPDATE BUFFER SUMS
+ 164          ///////////////////////////
+ 165          void updateBufferSums() {
+ 166   1      u8 i = 0;
+ 167   1        // the bufferSum is a running tally of the entire measurementBuffer
+ 168   1        // add the new measurement and subtract the old one
+ 169   1      
+ 170   1        for (i=0; i<8; i++) {
+ 171   2          u8 currentByte = inputs[i].measurementBuffer[byteCounter];
+ 172   2          bool currentMeasurement = (currentByte >> bitCounter) & 0x01; 
+ 173   2          if (currentMeasurement) {
+ 174   3            inputs[i].bufferSum++;
+ 175   3          }
+ 176   2          if (inputs[i].oldestMeasurement) {
+ 177   3            inputs[i].bufferSum--;
+ 178   3          }
+C51 COMPILER V9.60.0.0   UART                                                              08/17/2021 11:20:29 PAGE 4   
+
+ 179   2        }  
+ 180   1      }
+ 181          
+ 182          ///////////////////////////
+ 183          // UPDATE BUFFER INDEX
+ 184          ///////////////////////////
+ 185          void updateBufferIndex() {
+ 186   1        bitCounter++;
+ 187   1        if (bitCounter == 8) {
+ 188   2          bitCounter = 0;
+ 189   2          byteCounter++;
+ 190   2          if (byteCounter == 3) {
+ 191   3            byteCounter = 0;
+ 192   3          }
+ 193   2        }
+ 194   1      }
+ 195          ///////////////////////////
+ 196          // UPDATE INPUT STATES
+ 197          ///////////////////////////
+ 198          void updateInputStates() {
+ 199   1        u8 i = 0;
+ 200   1      
+ 201   1        for (i=0; i<8; i++) {
+ 202   2          if (inputs[i].pressed) {
+ 203   3            if (inputs[i].bufferSum < releaseThreshold) {  
+ 204   4              inputs[i].pressed = 0;
+ 205   4              KeyPadCMD[KeyPadCMDNum[i]] = 0;
+ 206   4              CMDSendFlag = 1;
+ 207   4              if(i == 0){
+ 208   5                UP_LED = 1;
+ 209   5              }
+ 210   4              else if(i == 1){
+ 211   5                DOWN_LED = 1;
+ 212   5              }
+ 213   4              else if(i == 2){
+ 214   5                LEFT_LED = 1;
+ 215   5              }
+ 216   4              else if(i == 3){
+ 217   5                RIGHT_LED = 1;
+ 218   5              }
+ 219   4              else if(i == 4){
+ 220   5                SPACE_LED = 1;
+ 221   5              }
+ 222   4              else if(i == 5){
+ 223   5                B_LED = 1;
+ 224   5              }
+ 225   4              else if(i == 6){
+ 226   5                A_LED = 1;
+ 227   5                KeyPadCMD[KeyPadCMDNum[i-1]] = 0;
+ 228   5              }
+ 229   4              else if(i == 7){
+ 230   5                CLICK_LED = 1;
+ 231   5                MousePressd = 0;
+ 232   5              }
+ 233   4            }
+ 234   3          } 
+ 235   2          else if (!inputs[i].pressed) {
+ 236   3            //if(inputs[i].bufferSum > pressThreshold) {  // input becomes pressed
+ 237   3            if(inputs[i].bufferSum > 18) {  // input becomes pressed
+ 238   4              inputs[i].pressed = 1; 
+ 239   4              KeyPadCMD[KeyPadCMDNum[i]] = KeyPadCode[i];
+ 240   4              CMDSendFlag = 1;
+C51 COMPILER V9.60.0.0   UART                                                              08/17/2021 11:20:29 PAGE 5   
+
+ 241   4              if(i == 0){
+ 242   5                UP_LED = 0;
+ 243   5              }
+ 244   4              else if(i == 1){
+ 245   5                DOWN_LED = 0;
+ 246   5              }
+ 247   4              else if(i == 2){
+ 248   5                LEFT_LED = 0;
+ 249   5              }
+ 250   4              else if(i == 3){
+ 251   5                RIGHT_LED = 0;
+ 252   5              }
+ 253   4              else if(i == 4){
+ 254   5                SPACE_LED = 0;
+ 255   5              }
+ 256   4              else if(i == 5){
+ 257   5                B_LED = 0;
+ 258   5              }
+ 259   4              else if(i == 6){
+ 260   5                A_LED = 0;
+ 261   5                KeyPadCMD[KeyPadCMDNum[i-1]] = KeyPadCode[i];
+ 262   5              }
+ 263   4              else if(i == 7){
+ 264   5                CLICK_LED = 0;
+ 265   5                MousePressd = 1;
+ 266   5              }
+ 267   4            }
+ 268   3          }
+ 269   2        }
+ 270   1        
+ 271   1      }
+ 272          void sendKeyPadStates(){
+ 273   1        u8 i = 0;
+ 274   1        KeyPadCMD[13] = 0x0C+KeyPadCMD[5]+KeyPadCMD[6]+KeyPadCMD[7]+KeyPadCMD[8]+KeyPadCMD[9]+KeyPadCMD[10]+KeyPa
+             -dCMD[11]+KeyPadCMD[12];
+ 275   1        for(i=0;i<14;i++){
+ 276   2          while(F_transmit == 0);
+ 277   2          if(F_transmit == 1)           //UART transmit data
+ 278   2          {
+ 279   3            F_transmit  = 0;
+ 280   3            SBUF1 = KeyPadCMD[i];
+ 281   3          }
+ 282   2        }
+ 283   1        
+ 284   1      
+ 285   1        for(i=0;i<13;i++){
+ 286   2          while(F_transmit == 0);
+ 287   2          if(F_transmit == 1)           //UART transmit data
+ 288   2          {
+ 289   3            F_transmit  = 0;
+ 290   3            if(MousePressd){
+ 291   4              SBUF1 = MousePress[i];
+ 292   4            }
+ 293   3            else{
+ 294   4              SBUF1 = MouseRelease[i];
+ 295   4            }
+ 296   3          }
+ 297   2        }
+ 298   1       }
+ 299              
+ 300            
+ 301          void DanceLED(void)
+C51 COMPILER V9.60.0.0   UART                                                              08/17/2021 11:20:29 PAGE 6   
+
+ 302          {
+ 303   1        u8 i = 0;
+ 304   1        for(i= 0 ;i<3;i++){
+ 305   2          UP_LED = 0;
+ 306   2          delay30ms();
+ 307   2          UP_LED = 1;
+ 308   2      
+ 309   2          LEFT_LED = 0;
+ 310   2          delay30ms();
+ 311   2          LEFT_LED = 1;
+ 312   2      
+ 313   2          DOWN_LED = 0;
+ 314   2          delay30ms();
+ 315   2          DOWN_LED = 1;     
+ 316   2      
+ 317   2          RIGHT_LED = 0;
+ 318   2          delay30ms();
+ 319   2          RIGHT_LED = 1;
+ 320   2        }
+ 321   1        for(i = 0;i<3;i++){
+ 322   2          SPACE_LED = 0;
+ 323   2          delay30ms();
+ 324   2          SPACE_LED = 1;
+ 325   2      
+ 326   2          CLICK_LED = 0;
+ 327   2          delay30ms();
+ 328   2          CLICK_LED     = 1;
+ 329   2        }
+ 330   1        for(i = 0;i<3;i++){ 
+ 331   2          A_LED = 0;
+ 332   2          B_LED = 0;
+ 333   2          delay30ms();
+ 334   2          delay30ms();
+ 335   2      
+ 336   2          A_LED = 1;
+ 337   2          B_LED = 1;
+ 338   2          delay30ms();
+ 339   2          delay30ms();
+ 340   2        }
+ 341   1      
+ 342   1      }
+ 343          void delay30ms(void)   //
+ 344          {
+ 345   1          u16 a,b;
+ 346   1          for(b=500;b>0;b--)
+ 347   1              for(a=300;a>0;a--){
+ 348   2                _nop_();  //if Keil,require use intrins.h
+ 349   2                _nop_();  //if Keil,require use intrins.h
+ 350   2                _nop_();  //if Keil,require use intrins.h
+ 351   2                _nop_();  //if Keil,require use intrins.h
+ 352   2              }
+ 353   1      }
+ 354          
+ 355          void GPIO_Init(void)
+ 356          {
+ 357   1        SET_IO_DIR_OUT(3,6);    //UP_LED
+ 358   1        SET_IO_PP(3,6);
+ 359   1        P3_6 = 1;
+ 360   1        
+ 361   1        SET_IO_DIR_OUT(3,0);    //LEFT_LED
+ 362   1        SET_IO_PP(3,0);
+ 363   1        P3_0 = 1;
+C51 COMPILER V9.60.0.0   UART                                                              08/17/2021 11:20:29 PAGE 7   
+
+ 364   1        
+ 365   1        SET_IO_DIR_OUT(2,1);    //DOWN_LED
+ 366   1        SET_IO_PP(2,1);
+ 367   1        P2_1 = 1;
+ 368   1        
+ 369   1        SET_IO_DIR_OUT(2,5);    //RIGHT_LED
+ 370   1        SET_IO_PP(2,5);
+ 371   1        P2_5 = 1;
+ 372   1        
+ 373   1        SET_IO_DIR_OUT(1,7);    //SPACE_LED
+ 374   1        SET_IO_PP(1,7);
+ 375   1        P1_7 = 1;
+ 376   1        
+ 377   1        SET_IO_DIR_OUT(1,6);    //CLICK_LED
+ 378   1        SET_IO_PP(1,6);
+ 379   1        P1_6 = 1;
+ 380   1        
+ 381   1        SET_IO_DIR_OUT(0,4);    //A_LED
+ 382   1        SET_IO_PP(0,4);
+ 383   1        P0_4 = 1;
+ 384   1        
+ 385   1        SET_IO_DIR_OUT(1,5);    //B_LED
+ 386   1        SET_IO_PP(1,5);
+ 387   1        P1_5 = 1;
+ 388   1        
+ 389   1        SET_IO_DIR_IN(3,2);    //UP
+ 390   1        SET_IO_DIR_IN(2,4);    //DOWN
+ 391   1        SET_IO_DIR_IN(3,1);    //LEFT
+ 392   1        SET_IO_DIR_IN(2,6);    //RIGHT
+ 393   1        SET_IO_DIR_IN(2,3);    //SPACE
+ 394   1        SET_IO_DIR_IN(2,2);    //CLICK
+ 395   1        SET_IO_DIR_IN(1,3);    //A
+ 396   1        SET_IO_DIR_IN(1,4);    //B
+ 397   1      }
+ 398          /*************************************************
+ 399            function name: ADC_INT()
+ 400            function work: ADC INT sub function
+ 401            input data   : null
+ 402            output data  : null
+ 403            note     : interrupt function and set the CMDSendFlag
+ 404          *************************************************/
+ 405          void ADC_INT()    interrupt ADC_VECTOR
+ 406          {
+ 407   1        EIF2    &=  0xEF;
+ 408   1        ADC_Transformation_End  = 1;
+ 409   1      }
+ 410          /////////////////////////////////////ADC////////////////////////////////////////
+ 411          unsigned long Get_Channl_ADC_Val(long ADC_Channl) {
+ 412   1        //******volt_AN is the voltage of the input channel*****//
+ 413   1        //******the data divide 1000 is the real voltage *******//
+ 414   1        int i = 0;
+ 415   1      
+ 416   1        unsigned long result_ADC_CH;
+ 417   1      
+ 418   1        ADCON1  = ADC_Channl;         //AN channel switch
+ 419   1        ADCON0      |= 0x02;        //start AD converter
+ 420   1        while (ADC_Transformation_End == 0);
+ 421   1        if (ADC_Transformation_End == 1)
+ 422   1        {
+ 423   2            ADC_Transformation_End  = 0;
+ 424   2            result_ADC_CH = (ADRESH << 8) + ADRESL; //read the convert result
+ 425   2        }
+C51 COMPILER V9.60.0.0   UART                                                              08/17/2021 11:20:29 PAGE 8   
+
+ 426   1        return result_ADC_CH;
+ 427   1      }
+ 428          /*************************************************
+ 429            function name: ADC_init()
+ 430            function work: initial the ADC function
+ 431            input data   : null
+ 432            output data  : null
+ 433            note     : setting the ADC function
+ 434          *************************************************/
+ 435          void ADC_init()
+ 436          {
+ 437   1        //=======e.g. if use AN0+AN3,in the sample port THE value is pin0+pin3========//
+ 438   1      
+ 439   1        P32CFG    = 0x01;
+ 440   1        P31CFG    = 0x01;
+ 441   1        P24CFG    = 0x01;
+ 442   1        P26CFG    = 0x01;
+ 443   1        
+ 444   1        P23CFG    = 0x01;
+ 445   1        P22CFG    = 0x01;
+ 446   1        P13CFG    = 0x01;
+ 447   1        P14CFG    = 0x01;
+ 448   1      
+ 449   1        //==========================other register configure=========================//
+ 450   1      
+ 451   1        ADCON2    = 0x00;
+ 452   1      
+ 453   1        //bit7 0:disable HW trigger 1:enable HW trigger
+ 454   1        //bit6 0:external trigger pin selected ADCET0 1:external trigger pin selected ADCET1
+ 455   1        //bit5~4 ADC HW trigger source select
+ 456   1        //     00:PG0(PWM0) 01:PG2 (PWM2) 10:PG4 (PWM4) 11:ADCET0/ADCET1
+ 457   1        //bit3~2 ADC HW trigger edge select
+ 458   1        //     00:falling edge 01:rising edge 10:PWM period middle 11:PWM period end
+ 459   1      
+ 460   1        ADCON1    = 0x00;
+ 461   1      
+ 462   1        //bit7  0:disable ADC IP  1:enable ADC IP
+ 463   1        //bit6~4:ADCKS<2:0> ADC clock select
+ 464   1        //    000:f/2 001:f/4 010:f/8 011:f/16  100:f/32 101:f/64 110:f/128 111:f/256
+ 465   1        //bit3~0:ADCHS<3:0>: AN channel select
+ 466   1        //0000~1110:AN0~AN14    1111:AN15 reference for ADCON0.AN15SEL define
+ 467   1      
+ 468   1        ADCON0    = 0x40;
+ 469   1      
+ 470   1        //bit7 1: AN channel>=16 0: AN channel<16
+ 471   1        //bit6 0:left align 1:right align
+ 472   1        //bit5~4 AN15 select source bit   00:VBG 01:OP0_O 10:OP1_O
+ 473   1        //bit1 ADGO   0:can not write 1:start AD converter
+ 474   1      
+ 475   1        ADCMPC    = 0x00;
+ 476   1      
+ 477   1        //bit7 0:disable ADC CMP pwm fb function 1:enable
+ 478   1        //bit6 0:ADRES>=ADCMP,ADCMPO=1;1:ADRES<ADCMP,ADCMPO=1
+ 479   1        //bit4 ADC CMP output bit 0:CMP output 0 1:CMP output 1
+ 480   1        //bit1~0 ADC HW trigger delay time bit9~8
+ 481   1      
+ 482   1      
+ 483   1        //the ADC result
+ 484   1        //ADRESH/ADRESL
+ 485   1        //ADFM=0 ADRESH:ADRES11~ADRES4 ADRESL7~4:ADRES3~ADRES0
+ 486   1        //ADFM=1 ADRESH3~0:ADRES11~ADRES8 ADRESL:ADRES7~ADRES0
+ 487   1      
+C51 COMPILER V9.60.0.0   UART                                                              08/17/2021 11:20:29 PAGE 9   
+
+ 488   1        //the CMP register
+ 489   1        //ADCMPH:D11~D4 ADCMPL BIT3~0:D3~D0
+ 490   1      
+ 491   1        //  ADCON0    |=  0x02;     //start AD converter
+ 492   1      
+ 493   1        //*****************************************************************//
+ 494   1      
+ 495   1      }
+ 496          /*************************************************
+ 497          function name: UART1_INIT()
+ 498          function work: initial the UART function
+ 499          input data   : null
+ 500          output data  : null
+ 501          note     : setting the UART1 function
+ 502          *************************************************/
+ 503          void UART1_INIT()               //BPS
+ 504          {
+ 505   1        
+ 506   1        P05CFG  = 0x02;               //enable TX pin
+ 507   1        
+ 508   1        SCON1   = 0x40;             //UART 8bit asyn transmit enable
+ 509   1        
+ 510   1      //Bit7~6  UnSM0~UnSM1 00:master synchronize 01:8 bit async baud rate veriable timer1/4
+ 511   1      //            10:9bit async baud rate fsys/32 or fsys/64 11:9 bit async baud rate veriable
+ 512   1      //Bit5  UnSM2 Multi-computer Communication control bit 0:disable 1:enable
+ 513   1      //Bit4  UnREN receive enable bit 0:disable 1:enable
+ 514   1      //Bit3  UnTB8 trandmit 9-th data bit 0:bit=0 1:bit=1
+ 515   1      //Bit2  UnRB8 receive 9-th data bit 0:bit=0 1:bit=1
+ 516   1      //Bit1  TIn transmit interrupt (SW clear) 1:transmit buffer is null ,can transmit the next data
+ 517   1      //Bit0  RIn receive interrupt (SW clear)  1:receive buffer is full ,after read,can receive the next data
+ 518   1      
+ 519   1        PCON  &= 0x7f;            //baud is the define rate
+ 520   1        PCON  |= 0x40;
+ 521   1        
+ 522   1        FUNCCR  |= 0x2A;            //clock from BRT
+ 523   1        
+ 524   1        BRTCON  =  0x80;
+ 525   1        
+ 526   1      #define value_set 65380
+ 527   1      
+ 528   1        BRTDL =  value_set;
+ 529   1        BRTDH =  value_set/256;
+ 530   1        
+ 531   1      }
+ 532          /*************************************************
+ 533          function name: UART1_INT()
+ 534          function work: UART INT function
+ 535          input data   : null
+ 536          output data  : null
+ 537          note     : set the send and receive the data CMDSendFlag
+ 538          *************************************************/
+ 539          void UART1_INT()  interrupt UART1_VECTOR
+ 540          {
+ 541   1      
+ 542   1        if(SCON1&0x02)            //transmit over
+ 543   1        {
+ 544   2          SCON1   &=  0x0FD;
+ 545   2          F_transmit  = 1;
+ 546   2        }
+ 547   1      }
+ 548          
+ 549          void INT_init()                 //intterrupt initinal
+C51 COMPILER V9.60.0.0   UART                                                              08/17/2021 11:20:29 PAGE 10  
+
+ 550          {
+ 551   1        IE    = 0x40;
+ 552   1        
+ 553   1      //Bit7  EA  Global interrupt enable bit 0:disable 1:enable
+ 554   1      //Bit6  ES1 UART1 interrupt enable bit  0:disable 1:enable
+ 555   1      //Bit5  ET2 Timer2 global interrupt enable bit  0:disable 1:enable
+ 556   1      //Bit4  ES0 UART1 interrupt enable bit  0:disable 1:enable
+ 557   1      //Bit3  ET1 Timer1 interrupt enable bit  0:disable 1:enable
+ 558   1      //Bit2  EX1 INT1 interrupt enable bit  0:disable 1:enable
+ 559   1      //Bit1  ET0 Timer0 interrupt enable bit  0:disable 1:enable
+ 560   1      //Bit0  EX0 INT0 interrupt enable bit  0:disable 1:enable
+ 561   1        
+ 562   1        IP    = 0x10;
+ 563   1        
+ 564   1        //Bit6  PS1   UART1 interrupt priority control bit 0:high priority 1:low priority
+ 565   1        //Bit5  PT2   Timer2 interrupt priority control bit 0:high priority 1:low priority
+ 566   1        //Bit4  PS0   UART1 interrupt priority control bit 0:high priority 1:low priority
+ 567   1        //Bit3  PT1   Timer1 interrupt priority control bit 0:high priority 1:low priority
+ 568   1        //Bit2  PX1   INT1 interrupt priority control bit 0:high priority 1:low priority
+ 569   1        //Bit1  PT0   Timer0 interrupt priority control bit 0:high priority 1:low priority
+ 570   1        //Bit0  PX0   INT0 interrupt priority control bit 0:high priority 1:low priority
+ 571   1        
+ 572   1        EIE2 = 0x10;  
+ 573   1      
+ 574   1        //Bit7  SPIIE SPI enable interrupt bit 0:disable 1:enable
+ 575   1        //Bit6  I2CIE I2C enable interrupt bit 0:disable 1:enable
+ 576   1        //Bit5  WDTIE WDT enable interrupt bit 0:disable 1:enable
+ 577   1        //Bit4  ADCIE ADC enable interrupt bit 0:disable 1:enable
+ 578   1        //Bit3  PWMIE PWM enable interrupt bit 0:disable 1:enable(EIP2.PPWM must be the same as EIP1.PP3PWM)
+ 579   1        //Bit1  ET4  Timer4 enable interrupt bit 0:disable 1:enable
+ 580   1        //Bit0  ET3  Timer3 enable interrupt bit 0:disable 1:enable
+ 581   1      
+ 582   1        EA    = 1;    //Bit7  EA  Global interrupt enable bit 0:disable 1:enable
+ 583   1        
+ 584   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   1801    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =    116      29
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =      2    ----
+   EDATA SIZE       =   ----    ----
+   HDATA SIZE       =   ----    ----
+   XDATA CONST SIZE =   ----    ----
+   FAR CONST SIZE   =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

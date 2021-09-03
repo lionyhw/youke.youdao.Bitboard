@@ -1,0 +1,5 @@
+".\Objects\STARTUP.obj",
+".\Objects\UART.obj" 
+TO ".\Objects\UART" 
+
+PRINT(".\Listings\UART.map")
