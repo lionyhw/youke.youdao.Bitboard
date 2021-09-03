@@ -1,6 +1,6 @@
 MCU：CMS8S5880
 HID MCU：CH9329
-
+Tool：Keil
 使用ADC读取判断按下和数字输出驱动LED
 
 串口 TX1 波特率9600
